@@ -1,0 +1,52 @@
+# Builds GreenLaunch on GitHub's Macs. Every push to main publishes a release with GreenLaunch.zip.
+name: Build GreenLaunch
+
+on:
+  push:
+    branches: [main]
+    paths-ignore: ["**.md"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 30
+    env:
+      VERSION: 0.1.${{ github.run_number }}
+      BUILD: ${{ github.run_number }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show the tools
+        run: |
+          sw_vers
+          xcodebuild -version
+          swift --version
+
+      - name: Build GreenLaunch.app
+        run: bash scripts/build_app.sh
+
+      - name: Run the self-test
+        run: dist/GreenLaunch.app/Contents/MacOS/GreenLaunch --self-test
+
+      - name: Keep the build
+        uses: actions/upload-artifact@v4
+        with:
+          name: GreenLaunch-${{ env.VERSION }}
+          path: dist/GreenLaunch.zip
+          if-no-files-found: error
+
+      - name: Publish the release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ env.VERSION }}
+          target_commitish: ${{ github.sha }}
+          name: GreenLaunch ${{ env.VERSION }}
+          files: dist/GreenLaunch.zip
+          make_latest: "true"
+          body: |
+            Personal build of the GreenLaunch launcher. It has no license check.
+            Download GreenLaunch.zip, unzip it, and drag GreenLaunch to Applications.
