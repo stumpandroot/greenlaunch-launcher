@@ -1,5 +1,5 @@
 #!/bin/bash
-# Builds dist/GreenLaunch.app (Apple silicon and Intel in one app) and dist/GreenLaunch.zip.
+# Builds dist/GreenLaunch.app (Apple silicon and Intel in one app). scripts/sign_and_package.sh makes the DMG.
 # Needs a Mac with Xcode or the Xcode command line tools.
 #   VERSION  the version shown in the app, like 0.1.4 (default 0.1.0)
 #   BUILD    the build number (default 1)
@@ -24,5 +24,4 @@ codesign --force --deep --sign - "$APP"
 codesign --verify --verbose=2 "$APP"
 lipo -info "$APP/Contents/MacOS/GreenLaunch"
 
-(cd dist && ditto -c -k --keepParent GreenLaunch.app GreenLaunch.zip)
 echo "Built $APP ($VERSION, build $BUILD)"

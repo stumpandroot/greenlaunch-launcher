@@ -1,4 +1,5 @@
-# Builds GreenLaunch on GitHub's Macs. Every push to main publishes a release with GreenLaunch.zip.
+# Builds GreenLaunch on GitHub's Macs. Every push to main publishes a release with GreenLaunch.dmg.
+# With the six signing secrets set, the DMG is signed and notarized, so it opens without warnings.
 name: Build GreenLaunch
 
 on:
@@ -13,10 +14,11 @@ permissions:
 jobs:
   build:
     runs-on: macos-15
-    timeout-minutes: 30
+    timeout-minutes: 60
     env:
       VERSION: 0.1.${{ github.run_number }}
       BUILD: ${{ github.run_number }}
+      HAS_CERT: ${{ secrets.MACOS_CERTIFICATE != '' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -32,11 +34,40 @@ jobs:
       - name: Run the self-test
         run: dist/GreenLaunch.app/Contents/MacOS/GreenLaunch --self-test
 
+      - name: Add the signing certificate
+        if: env.HAS_CERT == 'true'
+        env:
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PWD: ${{ secrets.MACOS_CERTIFICATE_PWD }}
+        run: |
+          KC="$RUNNER_TEMP/greenlaunch.keychain-db"
+          PW="$(openssl rand -hex 16)"
+          echo "$MACOS_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security create-keychain -p "$PW" "$KC"
+          security set-keychain-settings -lut 21600 "$KC"
+          security unlock-keychain -p "$PW" "$KC"
+          security import "$RUNNER_TEMP/cert.p12" -P "$MACOS_CERTIFICATE_PWD" -A -t cert -f pkcs12 -k "$KC"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$PW" "$KC"
+          security list-keychains -d user -s "$KC" $(security list-keychains -d user | tr -d '"')
+          rm "$RUNNER_TEMP/cert.p12"
+          security find-identity -v -p codesigning "$KC"
+
+      - name: Sign, make the DMG, and notarize
+        env:
+          SIGN_IDENTITY: ${{ env.HAS_CERT == 'true' && secrets.MACOS_SIGN_IDENTITY || '' }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: bash scripts/sign_and_package.sh
+
+      - name: Run the self-test on the packaged app
+        run: dist/GreenLaunch.app/Contents/MacOS/GreenLaunch --self-test
+
       - name: Keep the build
         uses: actions/upload-artifact@v4
         with:
           name: GreenLaunch-${{ env.VERSION }}
-          path: dist/GreenLaunch.zip
+          path: dist/GreenLaunch.dmg
           if-no-files-found: error
 
       - name: Publish the release
@@ -45,8 +76,8 @@ jobs:
           tag_name: v${{ env.VERSION }}
           target_commitish: ${{ github.sha }}
           name: GreenLaunch ${{ env.VERSION }}
-          files: dist/GreenLaunch.zip
+          files: dist/GreenLaunch.dmg
           make_latest: "true"
           body: |
             Personal build of the GreenLaunch launcher. It has no license check.
-            Download GreenLaunch.zip, unzip it, and drag GreenLaunch to Applications.
+            Download GreenLaunch.dmg, open it, and drag GreenLaunch to Applications.

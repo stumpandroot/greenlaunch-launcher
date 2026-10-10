@@ -12,9 +12,35 @@ GreenLaunch is a Mac app that lists your GreenLaunch apps, opens them, and insta
 
 ## Get the app
 
-1. Open the [latest release](https://github.com/stumpandroot/greenlaunch-launcher/releases/latest) and download `GreenLaunch.zip`.
-2. Unzip it and drag **GreenLaunch** to your Applications folder.
-3. Open it. The first time, macOS blocks it because it isn't notarized. Go to **System Settings > Privacy & Security**, scroll down, and click **Open Anyway** next to the GreenLaunch message.
+1. Open the [latest release](https://github.com/stumpandroot/greenlaunch-launcher/releases/latest) and download `GreenLaunch.dmg`.
+2. Open the DMG and drag **GreenLaunch** onto the **Applications** shortcut.
+3. Open GreenLaunch from Applications.
+
+Until the signing secrets below are set, the build isn't notarized and macOS blocks it. To open an unsigned build, run this in Terminal once, then open GreenLaunch again:
+
+```
+xattr -dr com.apple.quarantine /Applications/GreenLaunch.app
+```
+
+## Sign and notarize the build (once)
+
+These are the same six secrets your Vectorize repo uses, with the same values. GitHub doesn't let you copy secrets between repos, so add them here again.
+
+1. In this repo, go to **Settings > Secrets and variables > Actions**.
+2. Click **New repository secret** for each of these:
+
+   | Name | Value |
+   | --- | --- |
+   | `MACOS_CERTIFICATE` | Your Developer ID Application certificate as base64 text (from `base64 -i Certificates.p12 \| pbcopy`) |
+   | `MACOS_CERTIFICATE_PWD` | The password you set when you exported `Certificates.p12` |
+   | `MACOS_SIGN_IDENTITY` | `Developer ID Application: Your Name (TEAMID)`, exactly as Keychain Access shows it |
+   | `APPLE_ID` | The email address of your Apple developer account |
+   | `APPLE_APP_PASSWORD` | An app-specific password from [account.apple.com](https://account.apple.com) |
+   | `APPLE_TEAM_ID` | Your 10-character team ID |
+
+3. On the **Actions** tab, click **Build GreenLaunch**, then **Run workflow**.
+
+The next release is signed and notarized, and it opens without warnings.
 
 ## Add a GitHub token
 
