@@ -62,6 +62,6 @@ The list of apps is in `Sources/GreenLaunch/Catalog.swift`. Each entry has the a
 
 ## How a build happens
 
-Every push to `main` runs `.github/workflows/build.yml` on GitHub's Macs. It builds one app that runs on Apple silicon and Intel, runs the self-test, and publishes a release named **GreenLaunch 0.1.*N*** with `GreenLaunch.zip` attached.
+Every push to `main` runs `.github/workflows/build.yml` on GitHub's Macs. It builds one app that runs on Apple silicon and Intel, runs the self-test, and publishes a release named **GreenLaunch 0.1.*N*** with `GreenLaunch.dmg` attached.
 
 To build on a Mac instead, run `bash scripts/build_app.sh`. The app lands in `dist/`.
