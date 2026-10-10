@@ -226,7 +226,8 @@ struct AppRow: View {
 
     @ViewBuilder
     private func statusLine(_ current: AppState, _ status: AppStatus) -> some View {
-        let installedVersion = current.installed?.version.map(displayVersion) ?? "Unknown version"
+        let installedVersion = (current.installed?.version.map(displayVersion) ?? "Unknown version")
+            + (current.installed?.locationNote.map { " · \($0)" } ?? "")
         let latest = current.release.map { displayVersion($0.tag_name) } ?? ""
         switch current.phase {
         case .failed(let message):
@@ -275,6 +276,10 @@ struct AppRow: View {
                     Button("Open") { store.open(app) }
                         .buttonStyle(PrimaryButtonStyle())
                 case .upToDate, .installedUnknown:
+                    if current.installed?.isInApplications == false {
+                        Button("Move to Applications") { store.moveToApplications(app) }
+                            .buttonStyle(SecondaryButtonStyle())
+                    }
                     Button("Open") { store.open(app) }
                         .buttonStyle(PrimaryButtonStyle())
                 case .notInstalled:

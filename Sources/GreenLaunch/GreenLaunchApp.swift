@@ -76,6 +76,20 @@ enum SelfTest {
         check(ReleasePicker.newest(releases, includeDrafts: true)?.release.tag_name == "v1.1.0", "Picks the newest draft when drafts are on")
 
         check(Set(Catalog.apps.map(\.id)).count == Catalog.apps.count, "Every catalog app has its own ID")
+
+        let home = "/Users/tim"
+        let spotted = Locator.usablePaths([
+            "/Users/tim/Downloads/Verbatim.app",
+            "/Users/tim/Downloads/Verbatim.app",
+            "/Volumes/Verbatim/Verbatim.app",
+            "/Users/tim/.Trash/Verbatim.app",
+            "/Applications/Big.app/Contents/Helpers/Verbatim.app",
+            "/Users/tim/Downloads/Verbatim.dmg",
+        ], home: home)
+        check(spotted == ["/Users/tim/Downloads/Verbatim.app"], "Spotlight results skip the Trash, disk images, nested apps, and duplicates")
+        check(Locator.isInApplications(URL(fileURLWithPath: "/Applications/Verbatim.app")), "Knows /Applications is an Applications folder")
+        check(!Locator.isInApplications(URL(fileURLWithPath: "/Users/tim/Downloads/Verbatim.app")), "Knows Downloads isn't an Applications folder")
+        check(Catalog.apps.first { $0.id == "verbatim" }?.bundleID == "co.stumpandroot.verbatim", "Uses Verbatim's existing app ID")
         let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "none"
         print("GreenLaunch version: \(version)")
         print(passed ? "All checks passed." : "Some checks failed.")

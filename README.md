@@ -4,7 +4,8 @@ GreenLaunch is a Mac app that lists your GreenLaunch apps, opens them, and insta
 
 ## What it does
 
-- Finds each app in Applications and shows its installed version.
+- Finds each app and shows its installed version. It checks the Applications folders and the app's ID first, then asks Spotlight to search the whole Mac by app ID and name. It skips copies in the Trash, inside disk images, and nested inside other apps.
+- Shows where an app is when it isn't in Applications, like "in Downloads", with a **Move to Applications** button. Updating an app outside Applications installs the new version in Applications and puts the old copy in the Trash.
 - Checks each app's GitHub repo for the newest release that has a DMG for your Mac's chip, Apple silicon or Intel.
 - Installs or updates an app: it downloads the DMG, quits the app if it's open (after asking), puts the old copy in the Trash, and copies the new one into place.
 - Opens an app, shows it in Finder, or opens its release page on GitHub. Right-click a row for the last two.

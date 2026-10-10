@@ -21,20 +21,68 @@ enum InstallError: LocalizedError {
 
 /// Finds an app on this Mac and reads its version.
 enum Locator {
+    static var applicationFolders: [URL] {
+        [
+            URL(fileURLWithPath: "/Applications"),
+            FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Applications"),
+        ]
+    }
+
+    static func isInApplications(_ url: URL) -> Bool {
+        let folder = url.standardizedFileURL.deletingLastPathComponent().path
+        return applicationFolders.contains { $0.standardizedFileURL.path == folder }
+    }
+
+    /// Fast check: the Applications folders, then wherever macOS has the app's ID registered.
     static func find(_ app: CatalogApp) -> InstalledApp? {
         let fileManager = FileManager.default
-        var candidates = [
-            URL(fileURLWithPath: "/Applications/\(app.name).app"),
-            fileManager.homeDirectoryForCurrentUser.appendingPathComponent("Applications/\(app.name).app"),
-        ]
+        var candidates = applicationFolders.map { $0.appendingPathComponent("\(app.name).app") }
         if let bundleID = app.bundleID,
            let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {
             candidates.append(url)
         }
-        for url in candidates where fileManager.fileExists(atPath: url.path) {
+        let home = fileManager.homeDirectoryForCurrentUser.path
+        for url in candidates where fileManager.fileExists(atPath: url.path) && !usablePaths([url.path], home: home).isEmpty {
             return read(url)
         }
         return nil
+    }
+
+    /// Slower check: asks Spotlight for the app by ID, then by name, anywhere on the Mac.
+    /// Picks the highest version when it finds more than one copy.
+    static func findWithSpotlight(_ app: CatalogApp) -> InstalledApp? {
+        var paths: [String] = []
+        if let bundleID = app.bundleID {
+            paths += spotlight("kMDItemCFBundleIdentifier == '\(bundleID)'")
+        }
+        paths += spotlight("kMDItemFSName == '\(app.name).app'")
+        let fileManager = FileManager.default
+        let found = usablePaths(paths, home: fileManager.homeDirectoryForCurrentUser.path)
+            .filter { fileManager.fileExists(atPath: $0) }
+            .map { read(URL(fileURLWithPath: $0)) }
+        return found.max { a, b in
+            (a.version.flatMap { AppVersion($0) } ?? AppVersion("0")!) < (b.version.flatMap { AppVersion($0) } ?? AppVersion("0")!)
+        }
+    }
+
+    /// Keeps app bundles that someone could use: skips the Trash, mounted disk images, and apps nested inside other apps.
+    static func usablePaths(_ paths: [String], home: String) -> [String] {
+        var seen = Set<String>()
+        return paths.filter { path in
+            guard path.hasSuffix(".app"),
+                  !path.hasPrefix("/Volumes/"),
+                  !path.hasPrefix(home + "/.Trash/"),
+                  !path.contains("/.Trash/"),
+                  !path.dropLast(4).contains(".app/"),
+                  seen.insert(path).inserted
+            else { return false }
+            return true
+        }
+    }
+
+    private static func spotlight(_ query: String) -> [String] {
+        guard let output = try? Installer.shell("/usr/bin/mdfind", [query]) else { return [] }
+        return output.split(separator: "\n").map(String.init)
     }
 
     /// Reads Info.plist directly so the version is fresh after an update.
@@ -140,7 +188,10 @@ enum Installer {
             throw InstallError.noAppInDMG
         }
 
-        let folder = existing?.deletingLastPathComponent() ?? URL(fileURLWithPath: "/Applications")
+        // Update in place when the app lives in an Applications folder. Otherwise the update lands in Applications
+        // and the old copy (in Downloads, say) goes to the Trash.
+        let folder = existing.flatMap { Locator.isInApplications($0) ? $0.deletingLastPathComponent() : nil }
+            ?? URL(fileURLWithPath: "/Applications")
         let destination = folder.appendingPathComponent(source.lastPathComponent)
         for old in Set([existing, destination].compactMap { $0?.standardizedFileURL }) where fileManager.fileExists(atPath: old.path) {
             try fileManager.trashItem(at: old, resultingItemURL: nil)
@@ -156,6 +207,17 @@ enum Installer {
     }
 
     static func isRunning(_ url: URL) -> Bool { !runningCopies(of: url).isEmpty }
+
+    /// Moves an app into /Applications and returns its new location.
+    static func moveToApplications(_ url: URL) throws -> URL {
+        let fileManager = FileManager.default
+        let destination = URL(fileURLWithPath: "/Applications").appendingPathComponent(url.lastPathComponent)
+        if fileManager.fileExists(atPath: destination.path) {
+            try fileManager.trashItem(at: destination, resultingItemURL: nil)
+        }
+        try fileManager.moveItem(at: url, to: destination)
+        return destination
+    }
 
     /// Asks the app to quit and waits up to 10 seconds.
     static func quit(_ url: URL) async {

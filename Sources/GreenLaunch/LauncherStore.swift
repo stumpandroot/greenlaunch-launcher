@@ -4,6 +4,16 @@ import SwiftUI
 struct InstalledApp: Equatable {
     let url: URL
     let version: String?
+
+    var isInApplications: Bool { Locator.isInApplications(url) }
+
+    /// Where the app is, for apps outside Applications, like "in Downloads".
+    var locationNote: String? {
+        guard !isInApplications else { return nil }
+        let folder = url.deletingLastPathComponent()
+        if folder.path == FileManager.default.homeDirectoryForCurrentUser.path { return "in your home folder" }
+        return "in \(FileManager.default.displayName(atPath: folder.path))"
+    }
 }
 
 enum Phase: Equatable {
@@ -74,9 +84,48 @@ final class LauncherStore: ObservableObject {
     var updateCount: Int { appsWithUpdates.count }
     var installedCount: Int { Catalog.apps.filter { state($0).installed != nil }.count }
 
+    private var isSearching = false
+
+    /// Finds each app. The fast check runs right away; apps it can't find get a Spotlight search in the background.
     func refreshInstalled() {
+        var missing: [CatalogApp] = []
         for app in Catalog.apps where !state(app).phase.isBusy {
-            states[app.id, default: AppState()].installed = Locator.find(app)
+            let found = Locator.find(app)
+            if found == nil, let previous = state(app).installed,
+               FileManager.default.fileExists(atPath: previous.url.path) {
+                // Keep a copy Spotlight found earlier, re-reading its version.
+                states[app.id]?.installed = Locator.read(previous.url)
+                continue
+            }
+            states[app.id, default: AppState()].installed = found
+            if found == nil { missing.append(app) }
+        }
+        guard !missing.isEmpty, !isSearching else { return }
+        isSearching = true
+        Task {
+            let results = await Task.detached {
+                missing.map { ($0.id, Locator.findWithSpotlight($0)) }
+            }.value
+            for (id, found) in results {
+                guard let found, states[id]?.installed == nil, states[id]?.phase.isBusy == false else { continue }
+                states[id]?.installed = found
+            }
+            isSearching = false
+        }
+    }
+
+    func moveToApplications(_ app: CatalogApp) {
+        guard let url = state(app).installed?.url else { return }
+        if Installer.isRunning(url) {
+            states[app.id]?.phase = .failed("Quit \(app.name), then move it to Applications.")
+            return
+        }
+        do {
+            let destination = try Installer.moveToApplications(url)
+            states[app.id]?.installed = Locator.read(destination)
+            states[app.id]?.phase = .idle
+        } catch {
+            states[app.id]?.phase = .failed("Couldn't move \(app.name). \(error.localizedDescription)")
         }
     }
 

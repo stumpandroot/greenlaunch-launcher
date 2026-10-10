@@ -24,7 +24,7 @@ enum Catalog {
             name: "Verbatim",
             tagline: "Paste a video link, get a searchable transcript.",
             repo: "stumpandroot/verbatim",
-            bundleID: nil,
+            bundleID: "co.stumpandroot.verbatim",
             tint: Color(hex: 0x7B5CFF)
         ),
         CatalogApp(
