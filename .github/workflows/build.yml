@@ -108,7 +108,9 @@ jobs:
           tag_name: v${{ env.VERSION }}
           target_commitish: ${{ github.sha }}
           name: Stump & Root Apps ${{ env.VERSION }}
-          files: dist/StumpAndRootApps.dmg
+          files: |
+            dist/StumpAndRootApps.dmg
+            dist/StumpAndRootApps.zip
           make_latest: "true"
           body: |
             Personal build of the Stump & Root Apps launcher. It has no license check.
@@ -121,7 +123,9 @@ jobs:
           tag_name: preview-${{ env.VERSION }}
           target_commitish: ${{ github.sha }}
           name: Stump & Root Apps ${{ env.VERSION }} (preview)
-          files: dist/StumpAndRootApps.dmg
+          files: |
+            dist/StumpAndRootApps.dmg
+            dist/StumpAndRootApps.zip
           prerelease: true
           make_latest: "false"
           body: |

@@ -49,4 +49,8 @@ if [ -n "${SIGN_IDENTITY:-}" ]; then
 fi
 
 hdiutil verify "$DMG"
+
+# A zip of the same app, for installing without mounting the disk image.
+rm -f dist/StumpAndRootApps.zip
+ditto -c -k --keepParent "$APP" dist/StumpAndRootApps.zip
 echo "Packaged $DMG"
