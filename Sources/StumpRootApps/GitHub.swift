@@ -79,19 +79,44 @@ enum ReleasePicker {
         return dmgs.first { asset in keys.contains { normalized(asset.name).contains($0) } } ?? dmgs.first
     }
 
-    /// The highest-versioned release that has a DMG for this Mac.
-    static func newest(_ releases: [GHRelease], includeDrafts: Bool, isARM: Bool = Machine.isARM) -> (release: GHRelease, asset: GHAsset)? {
-        let usable: [(release: GHRelease, asset: GHAsset)] = releases
+    /// The highest-versioned release that has a DMG for this Mac. A release whose tag doesn't fit the repo's scheme
+    /// (a moving tag like `beta-latest`, say) is skipped.
+    static func newest(_ releases: [GHRelease], includeDrafts: Bool, scheme: TagScheme = .version, isARM: Bool = Machine.isARM) -> (release: GHRelease, asset: GHAsset)? {
+        let usable: [(release: GHRelease, asset: GHAsset, version: AppVersion)] = releases
             .filter { includeDrafts || !$0.draft }
             .compactMap { release in
-                guard let asset = pickDMG(release.assets, isARM: isARM) else { return nil }
-                return (release, asset)
+                guard let version = TagReader.version(of: release.tag_name, scheme: scheme),
+                      let asset = pickDMG(release.assets, isARM: isARM)
+                else { return nil }
+                return (release, asset, version)
             }
-        return usable.max { a, b in
-            if let va = AppVersion(a.release.tag_name), let vb = AppVersion(b.release.tag_name), va != vb {
-                return va < vb
-            }
+        let best = usable.max { a, b in
+            if a.version != b.version { return a.version < b.version }
             return a.release.created_at < b.release.created_at
+        }
+        return best.map { ($0.release, $0.asset) }
+    }
+}
+
+/// Reads a release tag under a repo's scheme.
+enum TagReader {
+    static func version(of tag: String, scheme: TagScheme) -> AppVersion? {
+        switch scheme {
+        case .version:
+            return AppVersion(tag)
+        case .build(let prefix):
+            guard tag.hasPrefix(prefix), let number = Int(tag.dropFirst(prefix.count)), number >= 0 else { return nil }
+            return AppVersion(String(number))
+        }
+    }
+
+    /// A tag as the launcher shows it: `v1.2.3` or `build 361`.
+    static func label(_ tag: String, scheme: TagScheme) -> String {
+        switch scheme {
+        case .version:
+            return displayVersion(tag)
+        case .build(let prefix):
+            return "build " + (tag.hasPrefix(prefix) ? String(tag.dropFirst(prefix.count)) : tag)
         }
     }
 }

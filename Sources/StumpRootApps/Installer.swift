@@ -33,36 +33,51 @@ enum Locator {
         return applicationFolders.contains { $0.standardizedFileURL.path == folder }
     }
 
-    /// Fast check: the Applications folders, then wherever macOS has the app's ID registered.
+    /// Fast check: an app you chose by hand, the Applications folders, then wherever macOS has the app's ID registered.
     static func find(_ app: CatalogApp) -> InstalledApp? {
         let fileManager = FileManager.default
-        var candidates = applicationFolders.map { $0.appendingPathComponent("\(app.name).app") }
+        var candidates: [URL] = []
+        if let chosen = Links.url(for: app) { candidates.append(chosen) }
+        candidates += applicationFolders.map { $0.appendingPathComponent("\(app.fileName).app") }
         if let bundleID = app.bundleID,
            let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {
             candidates.append(url)
         }
         let home = fileManager.homeDirectoryForCurrentUser.path
-        for url in candidates where fileManager.fileExists(atPath: url.path) && !usablePaths([url.path], home: home).isEmpty {
+        for url in candidates where fileManager.fileExists(atPath: url.path)
+            && !usablePaths([url.path], home: home).isEmpty
+            && matches(app, at: url) {
             return read(url)
         }
         return nil
     }
 
-    /// Slower check: asks Spotlight for the app by ID, then by name, anywhere on the Mac.
+    /// Slower check: asks Spotlight for the app by ID, then by file name, anywhere on the Mac.
     /// Picks the highest version when it finds more than one copy.
     static func findWithSpotlight(_ app: CatalogApp) -> InstalledApp? {
         var paths: [String] = []
         if let bundleID = app.bundleID {
             paths += spotlight("kMDItemCFBundleIdentifier == '\(bundleID)'")
         }
-        paths += spotlight("kMDItemFSName == '\(app.name).app'")
+        paths += spotlight("kMDItemFSName == '\(app.fileName).app'")
         let fileManager = FileManager.default
         let found = usablePaths(paths, home: fileManager.homeDirectoryForCurrentUser.path)
             .filter { fileManager.fileExists(atPath: $0) }
-            .map { read(URL(fileURLWithPath: $0)) }
+            .map { URL(fileURLWithPath: $0) }
+            .filter { matches(app, at: $0) }
+            .map { read($0) }
+        let zero = AppVersion("0")!
         return found.max { a, b in
-            (a.version.flatMap { AppVersion($0) } ?? AppVersion("0")!) < (b.version.flatMap { AppVersion($0) } ?? AppVersion("0")!)
+            (a.version.flatMap { AppVersion($0) } ?? zero) < (b.version.flatMap { AppVersion($0) } ?? zero)
         }
+    }
+
+    /// Whether the bundle at `url` is this app. An app with a known ID only matches a bundle with that ID, so the
+    /// iPhone app's Verbose.app is never taken for the Mac app, or the other way around.
+    static func matches(_ app: CatalogApp, at url: URL) -> Bool {
+        guard let wanted = app.bundleID else { return true }
+        guard let found = info(url)?["CFBundleIdentifier"] as? String else { return false }
+        return found.caseInsensitiveCompare(wanted) == .orderedSame
     }
 
     /// Keeps app bundles that someone could use: skips the Trash, mounted disk images, and apps nested inside other apps.
@@ -85,10 +100,41 @@ enum Locator {
         return output.split(separator: "\n").map(String.init)
     }
 
-    /// Reads Info.plist directly so the version is fresh after an update.
+    /// The bundle's Info.plist, read from disk so the version is fresh after an update. An iPhone app installed on a
+    /// Mac keeps its real bundle inside `Wrapper/`.
+    static func info(_ url: URL) -> NSDictionary? {
+        if let plist = NSDictionary(contentsOf: url.appendingPathComponent("Contents/Info.plist")) { return plist }
+        let wrapper = url.appendingPathComponent("Wrapper")
+        let inner = (try? FileManager.default.contentsOfDirectory(at: wrapper, includingPropertiesForKeys: nil))?
+            .first { $0.pathExtension == "app" }
+        return inner.flatMap { NSDictionary(contentsOf: $0.appendingPathComponent("Info.plist")) }
+    }
+
     static func read(_ url: URL) -> InstalledApp {
-        let plist = NSDictionary(contentsOf: url.appendingPathComponent("Contents/Info.plist"))
-        return InstalledApp(url: url, version: plist?["CFBundleShortVersionString"] as? String)
+        let plist = info(url)
+        return InstalledApp(
+            url: url,
+            version: plist?["CFBundleShortVersionString"] as? String,
+            build: plist?["CFBundleVersion"] as? String
+        )
+    }
+}
+
+/// Apps you pointed the launcher at by hand (right-click, Choose app), for copies it can't find by itself, such as a
+/// build in Xcode's build folder.
+enum Links {
+    private static func key(_ app: CatalogApp) -> String { "link.\(app.id)" }
+
+    static func url(for app: CatalogApp) -> URL? {
+        UserDefaults.standard.string(forKey: key(app)).map { URL(fileURLWithPath: $0) }
+    }
+
+    static func set(_ url: URL?, for app: CatalogApp) {
+        if let url {
+            UserDefaults.standard.set(url.path, forKey: key(app))
+        } else {
+            UserDefaults.standard.removeObject(forKey: key(app))
+        }
     }
 }
 
@@ -129,7 +175,7 @@ final class Downloader: NSObject, URLSessionDownloadDelegate {
             return
         }
         let destination = FileManager.default.temporaryDirectory
-            .appendingPathComponent("GreenLaunch-\(UUID().uuidString).dmg")
+            .appendingPathComponent("StumpRootApps-\(UUID().uuidString).dmg")
         do {
             try FileManager.default.moveItem(at: location, to: destination)
             finish(.success(destination))
@@ -173,7 +219,7 @@ enum Installer {
     /// Mounts the DMG, copies its app over the installed copy (or into Applications), and cleans up.
     static func install(dmg: URL, preferredName: String, replacing existing: URL?) throws -> URL {
         let fileManager = FileManager.default
-        let mountPoint = fileManager.temporaryDirectory.appendingPathComponent("GreenLaunch-mount-\(UUID().uuidString)")
+        let mountPoint = fileManager.temporaryDirectory.appendingPathComponent("StumpRootApps-mount-\(UUID().uuidString)")
         try fileManager.createDirectory(at: mountPoint, withIntermediateDirectories: true)
         try shell("/usr/bin/hdiutil", ["attach", dmg.path, "-nobrowse", "-readonly", "-noautoopen", "-mountpoint", mountPoint.path])
         defer {

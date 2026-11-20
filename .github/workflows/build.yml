@@ -1,10 +1,12 @@
-# Builds GreenLaunch on GitHub's Macs. Every push to main publishes a release with GreenLaunch.dmg.
+# Builds Stump & Root Apps on GitHub's Macs.
+# A push to main publishes a release with StumpAndRootApps.dmg. A push to a claude/ branch publishes a preview
+# (a prerelease), so a change can be tried before it reaches main.
 # With the six signing secrets set, the DMG is signed and notarized, so it opens without warnings.
-name: Build GreenLaunch
+name: Build Stump & Root Apps
 
 on:
   push:
-    branches: [main]
+    branches: [main, "claude/**"]
     paths-ignore: ["**.md"]
   workflow_dispatch:
 
@@ -13,12 +15,13 @@ permissions:
 
 jobs:
   build:
-    runs-on: macos-15
+    runs-on: macos-26
     timeout-minutes: 60
     env:
-      VERSION: 0.1.${{ github.run_number }}
+      VERSION: 0.2.${{ github.run_number }}
       BUILD: ${{ github.run_number }}
       HAS_CERT: ${{ secrets.MACOS_CERTIFICATE != '' }}
+      APP: dist/Stump & Root Apps.app
     steps:
       - uses: actions/checkout@v4
 
@@ -28,11 +31,24 @@ jobs:
           xcodebuild -version
           swift --version
 
-      - name: Build GreenLaunch.app
-        run: bash scripts/build_app.sh
+      - name: Build the app
+        run: |
+          set -o pipefail
+          # Compiler errors also become annotations on the run, so they can be read without opening the log.
+          bash scripts/build_app.sh 2>&1 | tee build.log || {
+            grep -E "error:" build.log | sort -u | head -40 | while IFS= read -r line; do
+              echo "::error::${line}"
+            done
+            exit 1
+          }
 
       - name: Run the self-test
-        run: dist/GreenLaunch.app/Contents/MacOS/GreenLaunch --self-test
+        run: |
+          set -o pipefail
+          "$APP/Contents/MacOS/StumpRootApps" --self-test 2>&1 | tee selftest.log || {
+            grep -E "^FAIL" selftest.log | while IFS= read -r line; do echo "::error::${line}"; done
+            exit 1
+          }
 
       - name: Add the signing certificate
         if: env.HAS_CERT == 'true'
@@ -40,7 +56,7 @@ jobs:
           MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
           MACOS_CERTIFICATE_PWD: ${{ secrets.MACOS_CERTIFICATE_PWD }}
         run: |
-          KC="$RUNNER_TEMP/greenlaunch.keychain-db"
+          KC="$RUNNER_TEMP/launcher.keychain-db"
           PW="$(openssl rand -hex 16)"
           echo "$MACOS_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/cert.p12"
           security create-keychain -p "$PW" "$KC"
@@ -58,26 +74,56 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: bash scripts/sign_and_package.sh
+        run: |
+          set -o pipefail
+          bash scripts/sign_and_package.sh 2>&1 | tee package.log || {
+            tail -5 package.log | while IFS= read -r line; do echo "::error::${line}"; done
+            exit 1
+          }
 
       - name: Run the self-test on the packaged app
-        run: dist/GreenLaunch.app/Contents/MacOS/GreenLaunch --self-test
+        run: '"$APP/Contents/MacOS/StumpRootApps" --self-test'
+
+      - name: Note how the build was signed
+        run: |
+          if grep -q "Notarization status\|stapler" package.log && xcrun stapler validate dist/StumpAndRootApps.dmg; then
+            echo "::notice::Signed and notarized."
+          elif [ "$HAS_CERT" = "true" ]; then
+            echo "::notice::Signed, not notarized."
+          else
+            echo "::notice::Not signed (no signing secrets in this repo)."
+          fi
 
       - name: Keep the build
         uses: actions/upload-artifact@v4
         with:
-          name: GreenLaunch-${{ env.VERSION }}
-          path: dist/GreenLaunch.dmg
+          name: StumpAndRootApps-${{ env.VERSION }}
+          path: dist/StumpAndRootApps.dmg
           if-no-files-found: error
 
       - name: Publish the release
+        if: github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ env.VERSION }}
           target_commitish: ${{ github.sha }}
-          name: GreenLaunch ${{ env.VERSION }}
-          files: dist/GreenLaunch.dmg
+          name: Stump & Root Apps ${{ env.VERSION }}
+          files: dist/StumpAndRootApps.dmg
           make_latest: "true"
           body: |
-            Personal build of the GreenLaunch launcher. It has no license check.
-            Download GreenLaunch.dmg, open it, and drag GreenLaunch to Applications.
+            Personal build of the Stump & Root Apps launcher. It has no license check.
+            Download StumpAndRootApps.dmg, open it, and drag Stump & Root Apps to Applications.
+
+      - name: Publish a preview
+        if: github.ref != 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: preview-${{ env.VERSION }}
+          target_commitish: ${{ github.sha }}
+          name: Stump & Root Apps ${{ env.VERSION }} (preview)
+          files: dist/StumpAndRootApps.dmg
+          prerelease: true
+          make_latest: "false"
+          body: |
+            Preview build from the `${{ github.ref_name }}` branch.
+            Download StumpAndRootApps.dmg, open it, and drag Stump & Root Apps to Applications.

@@ -2,9 +2,9 @@
 import PackageDescription
 
 let package = Package(
-    name: "GreenLaunch",
-    platforms: [.macOS(.v13)],
+    name: "StumpRootApps",
+    platforms: [.macOS(.v14)],
     targets: [
-        .executableTarget(name: "GreenLaunch", path: "Sources/GreenLaunch")
+        .executableTarget(name: "StumpRootApps", path: "Sources/StumpRootApps")
     ]
 )

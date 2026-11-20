@@ -7,7 +7,7 @@ enum Entry {
         if CommandLine.arguments.contains("--self-test") {
             exit(SelfTest.run() ? 0 : 1)
         }
-        GreenLaunchApp.main()
+        LauncherApp.main()
     }
 }
 
@@ -15,17 +15,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 }
 
-struct GreenLaunchApp: App {
+struct LauncherApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var store = LauncherStore()
 
     var body: some Scene {
-        Window("GreenLaunch", id: "main") {
+        Window("Stump & Root Apps", id: "main") {
             ContentView()
                 .environmentObject(store)
-                .frame(minWidth: 760, minHeight: 480)
+                .frame(minWidth: 700, minHeight: 480)
         }
-        .defaultSize(width: 940, height: 620)
+        .defaultSize(width: 1120, height: 720)
         .commands {
             CommandGroup(after: .appInfo) {
                 Button("Check for Updates") {
@@ -75,6 +75,14 @@ enum SelfTest {
         check(ReleasePicker.newest(releases, includeDrafts: false)?.release.tag_name == "v1.0.0", "Skips drafts when drafts are off")
         check(ReleasePicker.newest(releases, includeDrafts: true)?.release.tag_name == "v1.1.0", "Picks the newest draft when drafts are on")
 
+        let betas = [release("beta-99", draft: false), release("beta-361", draft: false), release("beta-latest", draft: false), release("v1.0", draft: false)]
+        let beta = TagScheme.build(prefix: "beta-")
+        check(ReleasePicker.newest(betas, includeDrafts: false, scheme: beta)?.release.tag_name == "beta-361", "Picks the highest build among build tags and skips moving tags")
+        check(TagReader.version(of: "beta-latest", scheme: beta) == nil, "Rejects a build tag without a number")
+        check(TagReader.version(of: "beta-361", scheme: beta)! > AppVersion("356")!, "Compares a build tag with an installed build number")
+        check(TagReader.label("beta-361", scheme: beta) == "build 361", "Shows a build tag as a build number")
+        check(TagReader.label("1.2.0", scheme: .version) == "v1.2.0", "Shows a version tag with a v")
+
         check(Set(Catalog.apps.map(\.id)).count == Catalog.apps.count, "Every catalog app has its own ID")
 
         let home = "/Users/tim"
@@ -89,9 +97,13 @@ enum SelfTest {
         check(spotted == ["/Users/tim/Downloads/Verbatim.app"], "Spotlight results skip the Trash, disk images, nested apps, and duplicates")
         check(Locator.isInApplications(URL(fileURLWithPath: "/Applications/Verbatim.app")), "Knows /Applications is an Applications folder")
         check(!Locator.isInApplications(URL(fileURLWithPath: "/Users/tim/Downloads/Verbatim.app")), "Knows Downloads isn't an Applications folder")
-        check(Catalog.apps.first { $0.id == "verbatim" }?.bundleID == "co.stumpandroot.verbatim", "Uses Verbatim's existing app ID")
+        let verbose = Catalog.apps.first { $0.id == "verbose" }
+        check(verbose?.bundleID == "co.stumpandroot.verbatim" && verbose?.fileName == "Verbatim", "Finds the Mac's Verbose as Verbatim.app with its app ID")
+        check(Catalog.apps.first { $0.id == "verbose-iphone" }?.bundleID == "co.stumpandroot.verbatim.ios", "Keeps the iPhone app's Verbose.app apart from the Mac app")
+        check(Set(Catalog.apps.compactMap(\.bundleID)).count == Catalog.apps.compactMap(\.bundleID).count, "No two catalog apps share an app ID")
+        check(Family.allCases.allSatisfy { !Catalog.apps(in: $0).isEmpty }, "Every family has an app")
         let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "none"
-        print("GreenLaunch version: \(version)")
+        print("Stump & Root Apps version: \(version)")
         print(passed ? "All checks passed." : "Some checks failed.")
         return passed
     }

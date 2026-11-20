@@ -3,13 +3,13 @@
 <plist version="1.0">
 <dict>
     <key>CFBundleName</key>
-    <string>GreenLaunch</string>
+    <string>Stump &amp; Root Apps</string>
     <key>CFBundleDisplayName</key>
-    <string>GreenLaunch</string>
+    <string>Stump &amp; Root Apps</string>
     <key>CFBundleIdentifier</key>
-    <string>co.greenlaunch.launcher</string>
+    <string>co.stumpandroot.apps</string>
     <key>CFBundleExecutable</key>
-    <string>GreenLaunch</string>
+    <string>StumpRootApps</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
@@ -19,7 +19,7 @@
     <key>CFBundleIconFile</key>
     <string>AppIcon</string>
     <key>LSMinimumSystemVersion</key>
-    <string>13.0</string>
+    <string>14.0</string>
     <key>LSApplicationCategoryType</key>
     <string>public.app-category.utilities</string>
     <key>NSHighResolutionCapable</key>

@@ -1,9 +1,12 @@
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct InstalledApp: Equatable {
     let url: URL
     let version: String?
+    /// The build number (CFBundleVersion).
+    let build: String?
 
     var isInApplications: Bool { Locator.isInApplications(url) }
 
@@ -39,11 +42,14 @@ struct AppState {
 }
 
 enum AppStatus {
-    case noBuild
+    /// Not on this Mac, and the launcher has no way to get it (no build, or one it can't see).
+    case unavailable
+    /// Not on this Mac, and the launcher can install it or send you to TestFlight for it.
     case notInstalled
     case upToDate
     case updateAvailable
-    case installedUnknown
+    /// On this Mac, with nothing to compare its version with.
+    case installed
 }
 
 @MainActor
@@ -71,18 +77,44 @@ final class LauncherStore: ObservableObject {
     func status(_ app: CatalogApp) -> AppStatus {
         let current = state(app)
         guard let installed = current.installed else {
-            return current.asset == nil ? .noBuild : .notInstalled
+            switch app.source {
+            case .github: return current.asset == nil ? .unavailable : .notInstalled
+            case .testFlight: return .notInstalled
+            case .xcode, .file, .none: return .unavailable
+            }
         }
-        guard let release = current.release, current.asset != nil, let latest = AppVersion(release.tag_name) else {
-            return .installedUnknown
-        }
-        guard let have = installed.version.flatMap({ AppVersion($0) }) else { return .updateAvailable }
+        guard case .github(_, let scheme) = app.source,
+              let release = current.release, current.asset != nil,
+              let latest = TagReader.version(of: release.tag_name, scheme: scheme)
+        else { return .installed }
+        guard let have = installedVersion(installed, scheme: scheme).flatMap({ AppVersion($0) }) else { return .updateAvailable }
         return have < latest ? .updateAvailable : .upToDate
+    }
+
+    /// The installed number a repo's tags compare with: the version, or the build number.
+    private func installedVersion(_ installed: InstalledApp, scheme: TagScheme) -> String? {
+        switch scheme {
+        case .version: return installed.version
+        case .build: return installed.build
+        }
+    }
+
+    /// The installed copy's version as the launcher shows it: `v1.2.0`, or `build 361` for an app tagged by build.
+    func installedLabel(_ app: CatalogApp) -> String {
+        guard let installed = state(app).installed else { return "" }
+        if case .build = app.tagScheme, let build = installed.build { return "build \(build)" }
+        return installed.version.map(displayVersion) ?? "Unknown version"
+    }
+
+    /// The newest release's version as the launcher shows it.
+    func latestLabel(_ app: CatalogApp) -> String {
+        state(app).release.map { TagReader.label($0.tag_name, scheme: app.tagScheme) } ?? ""
     }
 
     var appsWithUpdates: [CatalogApp] { Catalog.apps.filter { status($0) == .updateAvailable } }
     var updateCount: Int { appsWithUpdates.count }
-    var installedCount: Int { Catalog.apps.filter { state($0).installed != nil }.count }
+    var installedApps: [CatalogApp] { Catalog.apps.filter { state($0).installed != nil } }
+    var installedCount: Int { installedApps.count }
 
     private var isSearching = false
 
@@ -114,6 +146,33 @@ final class LauncherStore: ObservableObject {
         }
     }
 
+    /// Asks for an app's location and remembers it, for a copy the launcher can't find by itself.
+    func chooseApp(_ app: CatalogApp) {
+        let panel = NSOpenPanel()
+        panel.title = "Choose \(app.name)"
+        panel.prompt = "Choose"
+        panel.allowedContentTypes = [.application]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.directoryURL = URL(fileURLWithPath: "/Applications")
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        guard Locator.matches(app, at: url) else {
+            states[app.id]?.phase = .failed("That isn't \(app.name). Its app ID doesn't match.")
+            return
+        }
+        Links.set(url, for: app)
+        states[app.id]?.installed = Locator.read(url)
+        states[app.id]?.phase = .idle
+    }
+
+    func hasChosenApp(_ app: CatalogApp) -> Bool { Links.url(for: app) != nil }
+
+    func forgetChosenApp(_ app: CatalogApp) {
+        Links.set(nil, for: app)
+        states[app.id]?.installed = nil
+        refreshInstalled()
+    }
+
     func moveToApplications(_ app: CatalogApp) {
         guard let url = state(app).installed?.url else { return }
         if Installer.isRunning(url) {
@@ -122,6 +181,7 @@ final class LauncherStore: ObservableObject {
         }
         do {
             let destination = try Installer.moveToApplications(url)
+            if hasChosenApp(app) { Links.set(destination, for: app) }
             states[app.id]?.installed = Locator.read(destination)
             states[app.id]?.phase = .idle
         } catch {
@@ -153,9 +213,10 @@ final class LauncherStore: ObservableObject {
         for app in Catalog.apps where app.repo == nil {
             states[app.id]?.release = nil
             states[app.id]?.asset = nil
-            states[app.id]?.checkMessage = "No GitHub repo yet."
+            states[app.id]?.checkMessage = nil
         }
 
+        let schemes = Dictionary(uniqueKeysWithValues: Catalog.apps.map { ($0.id, $0.tagScheme) })
         await withTaskGroup(of: (String, Result<[GHRelease], Error>).self) { group in
             for app in Catalog.apps {
                 guard let repo = app.repo else { continue }
@@ -171,7 +232,7 @@ final class LauncherStore: ObservableObject {
             for await (id, result) in group {
                 switch result {
                 case .success(let releases):
-                    let pick = ReleasePicker.newest(releases, includeDrafts: showDrafts)
+                    let pick = ReleasePicker.newest(releases, includeDrafts: showDrafts, scheme: schemes[id] ?? .version)
                     states[id]?.release = pick?.release
                     states[id]?.asset = pick?.asset
                     if pick != nil {
@@ -235,11 +296,12 @@ final class LauncherStore: ObservableObject {
                 }
             }
             states[id]?.phase = .installing
-            let name = app.name
+            let name = app.fileName
             let existing = state(app).installed?.url
             let destination = try await Task.detached {
                 try Installer.install(dmg: dmg, preferredName: name, replacing: existing)
             }.value
+            if hasChosenApp(app) { Links.set(destination, for: app) }
             states[id]?.installed = Locator.read(destination)
             states[id]?.phase = .idle
         } catch {
@@ -250,6 +312,15 @@ final class LauncherStore: ObservableObject {
     func open(_ app: CatalogApp) {
         guard let url = state(app).installed?.url else { return }
         NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration()) { _, _ in }
+    }
+
+    /// Opens TestFlight, where an app that ships through it is installed and updated.
+    func openTestFlight() {
+        if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.TestFlight") {
+            NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration()) { _, _ in }
+        } else if let url = URL(string: "https://apps.apple.com/app/testflight/id899247664") {
+            NSWorkspace.shared.open(url)
+        }
     }
 
     func reveal(_ app: CatalogApp) {

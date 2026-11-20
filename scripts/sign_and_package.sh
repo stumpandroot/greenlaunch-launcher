@@ -1,5 +1,5 @@
 #!/bin/bash
-# Signs dist/GreenLaunch.app, puts it in dist/GreenLaunch.dmg, notarizes the DMG, and staples the ticket.
+# Signs "dist/Stump & Root Apps.app", puts it in dist/StumpAndRootApps.dmg, notarizes the DMG, and staples the ticket.
 #
 # Environment:
 #   SIGN_IDENTITY       "Developer ID Application: Your Name (TEAMID)". Without it, the DMG holds the
@@ -8,11 +8,11 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-APP="dist/GreenLaunch.app"
-DMG="dist/GreenLaunch.dmg"
+APP="dist/Stump & Root Apps.app"
+DMG="dist/StumpAndRootApps.dmg"
 
 if [ -n "${SIGN_IDENTITY:-}" ]; then
-  echo "Signing GreenLaunch with $SIGN_IDENTITY"
+  echo "Signing the app with $SIGN_IDENTITY"
   codesign --force --timestamp --options runtime --sign "$SIGN_IDENTITY" "$APP"
   codesign --verify --deep --strict --verbose=2 "$APP"
 else
@@ -24,7 +24,7 @@ STAGE="$(mktemp -d)"
 cp -R "$APP" "$STAGE/"
 ln -s /Applications "$STAGE/Applications"
 rm -f "$DMG"
-hdiutil create -volname "GreenLaunch" -srcfolder "$STAGE" -ov -format UDZO "$DMG"
+hdiutil create -volname "Stump & Root Apps" -srcfolder "$STAGE" -ov -format UDZO "$DMG"
 rm -rf "$STAGE"
 
 if [ -n "${SIGN_IDENTITY:-}" ]; then
