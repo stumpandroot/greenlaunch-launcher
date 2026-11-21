@@ -50,6 +50,29 @@ jobs:
             exit 1
           }
 
+      # The self-test exits before the window opens, so it can't catch a crash on launch. This opens the real app,
+      # lets it draw and check GitHub for 25 seconds, and fails if it died.
+      - name: Open the app and check that it stays open
+        run: |
+          "$APP/Contents/MacOS/StumpRootApps" > launch.log 2>&1 &
+          PID=$!
+          sleep 25
+          if kill -0 "$PID" 2>/dev/null; then
+            echo "::notice::The app stayed open for 25 seconds."
+            kill "$PID" || true
+          else
+            wait "$PID" || CODE=$?
+            echo "::error::The app quit within 25 seconds of opening (exit ${CODE:-0})."
+            tail -5 launch.log | while IFS= read -r line; do echo "::error::${line}"; done
+            sleep 10
+            REPORT="$(ls -t ~/Library/Logs/DiagnosticReports/StumpRootApps* 2>/dev/null | head -1 || true)"
+            if [ -n "$REPORT" ]; then
+              grep -E "Exception Type|Termination Reason|Triggered by Thread" "$REPORT" | head -5 | while IFS= read -r line; do echo "::error::${line}"; done
+              sed -n '/Crashed/,/^$/p' "$REPORT" | head -12 | while IFS= read -r line; do echo "::error::${line}"; done
+            fi
+            exit 1
+          fi
+
       - name: Add the signing certificate
         if: env.HAS_CERT == 'true'
         env:

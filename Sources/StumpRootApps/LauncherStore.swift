@@ -216,35 +216,25 @@ final class LauncherStore: ObservableObject {
             states[app.id]?.checkMessage = nil
         }
 
-        let schemes = Dictionary(uniqueKeysWithValues: Catalog.apps.map { ($0.id, $0.tagScheme) })
-        await withTaskGroup(of: (String, Result<[GHRelease], Error>).self) { group in
-            for app in Catalog.apps {
-                guard let repo = app.repo else { continue }
-                let id = app.id
-                group.addTask {
-                    do {
-                        return (id, .success(try await client.releases(repo: repo)))
-                    } catch {
-                        return (id, .failure(error))
-                    }
+        // One repo at a time, with no task group: the 0.2.5 build crashed on launch as a group's child task finished
+        // (EXC_BAD_ACCESS in completeTaskWithClosure, macOS 26.7). Five short requests in a row cost little.
+        for app in Catalog.apps {
+            guard let repo = app.repo else { continue }
+            let id = app.id
+            do {
+                let releases = try await client.releases(repo: repo)
+                let pick = ReleasePicker.newest(releases, includeDrafts: showDrafts, scheme: app.tagScheme)
+                states[id]?.release = pick?.release
+                states[id]?.asset = pick?.asset
+                if pick != nil {
+                    states[id]?.checkMessage = nil
+                } else if !showDrafts && releases.contains(where: { $0.draft }) {
+                    states[id]?.checkMessage = "Only draft builds so far. Turn on drafts in Settings."
+                } else {
+                    states[id]?.checkMessage = "No Mac build published yet."
                 }
-            }
-            for await (id, result) in group {
-                switch result {
-                case .success(let releases):
-                    let pick = ReleasePicker.newest(releases, includeDrafts: showDrafts, scheme: schemes[id] ?? .version)
-                    states[id]?.release = pick?.release
-                    states[id]?.asset = pick?.asset
-                    if pick != nil {
-                        states[id]?.checkMessage = nil
-                    } else if !showDrafts && releases.contains(where: { $0.draft }) {
-                        states[id]?.checkMessage = "Only draft builds so far. Turn on drafts in Settings."
-                    } else {
-                        states[id]?.checkMessage = "No Mac build published yet."
-                    }
-                case .failure(let error):
-                    states[id]?.checkMessage = error.localizedDescription
-                }
+            } catch {
+                states[id]?.checkMessage = error.localizedDescription
             }
         }
 
